@@ -9,7 +9,7 @@ import AppKit
 import Foundation
 import OSLog
 
-public enum SonyThumbnailExtractor {
+public nonisolated enum SonyThumbnailExtractor {
     /// Extract thumbnail using generic ImageIO framework.
     /// - Parameters:
     ///   - url: The URL of the RAW image file.
