@@ -16,7 +16,7 @@ public enum SonyThumbnailExtractor {
     ///   - maxDimension: Maximum pixel size for the longest edge of the thumbnail.
     ///   - qualityCost: Interpolation cost.
     /// - Returns: A `CGImage` thumbnail.
-    public static func extractSonyThumbnail(
+    public nonisolated static func extractSonyThumbnail(
         from url: URL,
         maxDimension: CGFloat,
         qualityCost: Int = 4
