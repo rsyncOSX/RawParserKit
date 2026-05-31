@@ -35,8 +35,8 @@ import Foundation
 /// from CGImageSourceCreateThumbnailAtIndex).
 public struct EmbeddedJPEGLocations: Sendable {
     public struct Location: Sendable {
-        public let offset: Int
-        public let length: Int
+        public nonisolated let offset: Int
+        public nonisolated let length: Int
 
         public nonisolated init(offset: Int, length: Int) {
             self.offset = offset
@@ -45,11 +45,11 @@ public struct EmbeddedJPEGLocations: Sendable {
     }
 
     /// IFD1 tiny thumbnail (~8 KB, ~160 px).
-    public let thumbnail: Location?
+    public nonisolated let thumbnail: Location?
     /// IFD0 preview JPEG (~400 KB, 1616×1080).
-    public let preview: Location?
+    public nonisolated let preview: Location?
     /// IFD2 full-resolution JPEG (~4 MB, 7008×4672).
-    public let fullJPEG: Location?
+    public nonisolated let fullJPEG: Location?
 
     public nonisolated init(thumbnail: Location? = nil, preview: Location? = nil, fullJPEG: Location? = nil) {
         self.thumbnail = thumbnail

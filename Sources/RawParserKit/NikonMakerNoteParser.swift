@@ -40,8 +40,8 @@ import Foundation
 /// lives inside a SubIFD chain rather than at a top-level image index).
 public struct NEFEmbeddedJPEGLocations: Sendable {
     public struct Location: Sendable {
-        public let offset: Int
-        public let length: Int
+        public nonisolated let offset: Int
+        public nonisolated let length: Int
 
         public nonisolated init(offset: Int, length: Int) {
             self.offset = offset
@@ -50,9 +50,9 @@ public struct NEFEmbeddedJPEGLocations: Sendable {
     }
 
     /// Largest Compression=6 SubIFD referenced by IFD0 tag 0x014A.
-    public let preview: Location?
+    public nonisolated let preview: Location?
     /// IFD1 preview JPEG (JPEGInterchangeFormat / Length), when present.
-    public let ifd1JPEG: Location?
+    public nonisolated let ifd1JPEG: Location?
 
     public nonisolated init(preview: Location? = nil, ifd1JPEG: Location? = nil) {
         self.preview = preview
