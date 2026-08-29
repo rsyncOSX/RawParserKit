@@ -123,8 +123,11 @@ public actor RawImageLoader {
             .deletingPathExtension()
             .appendingPathExtension(SupportedFileType.jpg.rawValue)
 
-        let sidecarImage = await Task.detached(priority: .userInitiated) {
-            OrientationNormalizedImageLoader.loadCGImage(from: sidecarJPGURL)
+        let sidecarImage: CGImage? = await Task.detached(priority: .userInitiated) {
+            guard FileManager.default.fileExists(atPath: sidecarJPGURL.path) else {
+                return nil
+            }
+            return OrientationNormalizedImageLoader.loadCGImage(from: sidecarJPGURL)
         }.value
 
         guard !Task.isCancelled else { return nil }
