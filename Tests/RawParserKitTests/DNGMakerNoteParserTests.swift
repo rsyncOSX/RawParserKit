@@ -211,9 +211,67 @@ private func makeDNGWithLittleEndian(jpegOffset: UInt32, jpegLength: UInt32) thr
     return url
 }
 
+/// Builds a standards-classified DNG whose IFD0 is the raw image and whose
+/// primary rendered preview is stored in a SubIFD.
+private func makeDNGWithRawIFD0AndRenderedSubIFDPreview() throws -> URL {
+    let ifd0Offset: UInt32 = 8
+    let ifd0EntryCount: UInt32 = 5
+    let subIFDOffset = ifd0Offset + 2 + ifd0EntryCount * 12 + 4
+    let rawOffset: UInt32 = 300
+    let rawLength: UInt32 = 20
+    let previewOffset: UInt32 = 400
+    let previewLength: UInt32 = 50
+
+    var bytes: [UInt8] = []
+    bytes += [0x49, 0x49, 0x2A, 0x00]
+    bytes += le32(ifd0Offset)
+
+    // IFD0: NewSubFileType=0 identifies the full-resolution raw image.
+    bytes += le16(UInt16(ifd0EntryCount))
+    bytes += ifdEntryLE(tag: 0x00FE, type: 4, count: 1, value: 0)
+    bytes += ifdEntryLE(tag: 0x0103, type: 3, count: 1, value: 7)
+    bytes += ifdEntryLE(tag: 0x0111, type: 4, count: 1, value: rawOffset)
+    bytes += ifdEntryLE(tag: 0x0117, type: 4, count: 1, value: rawLength)
+    bytes += ifdEntryLE(tag: 0x014A, type: 4, count: 1, value: subIFDOffset)
+    bytes += le32(0)
+
+    // SubIFD: NewSubFileType=1 identifies the primary rendered preview.
+    bytes += le16(4)
+    bytes += ifdEntryLE(tag: 0x00FE, type: 4, count: 1, value: 1)
+    bytes += ifdEntryLE(tag: 0x0103, type: 3, count: 1, value: 7)
+    bytes += ifdEntryLE(tag: 0x0111, type: 4, count: 1, value: previewOffset)
+    bytes += ifdEntryLE(tag: 0x0117, type: 4, count: 1, value: previewLength)
+    bytes += le32(0)
+
+    bytes += [UInt8](repeating: 0, count: Int(rawOffset) - bytes.count)
+    bytes += [UInt8](repeating: 0xAA, count: Int(rawLength))
+    bytes += [UInt8](repeating: 0, count: Int(previewOffset) - bytes.count)
+    bytes += [0xFF, 0xD8]
+    bytes += [UInt8](repeating: 0xBB, count: Int(previewLength) - 4)
+    bytes += [0xFF, 0xD9]
+
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString + ".dng")
+    try Data(bytes).write(to: url)
+    return url
+}
+
 // MARK: - Tests
 
 struct DNGMakerNoteParserTests {
+
+    @Test
+    func `Rendered SubIFD preview wins over raw IFD0 strip`() throws {
+        let url = try makeDNGWithRawIFD0AndRenderedSubIFDPreview()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let locations = try #require(DNGMakerNoteParser.embeddedJPEGLocations(from: url))
+        let preview = try #require(locations.preview)
+
+        #expect(preview.offset == 400)
+        #expect(preview.length == 50)
+        #expect(locations.fullJPEG == nil)
+    }
 
     // MARK: P1 Issue 1 - SubIFD-only layout (no IFD1)
 

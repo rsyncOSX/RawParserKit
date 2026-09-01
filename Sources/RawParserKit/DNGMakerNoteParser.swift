@@ -382,14 +382,21 @@ private struct DNGTIFFParser {
         guard let ifd0Raw = readU32(at: 4) else { return .init() }
         let ifd0 = Int(ifd0Raw)
 
-        // IFD0: preview JPEG via StripOffsets (0x0111) + StripByteCounts (0x0117)
-        // or JPEGInterchangeFormat (0x0201) + Length (0x0202)
-        let preview: Loc? = locateJPEG(in: ifd0, offTag: 0x0111, lenTag: 0x0117)
-            ?? locateJPEG(in: ifd0, offTag: 0x0201, lenTag: 0x0202)
+        // Prefer DNG's image classification tags over IFD position. IFD0 may be
+        // the full-resolution raw image (NewSubFileType == 0), in which case its
+        // JPEG-compressed strip is not a rendered preview.
+        let ifd0Preview = renderedPreviewJPEG(in: ifd0) ?? unclassifiedJPEG(in: ifd0)
 
-        // SubIFDs via tag 0x014A — may contain full-res JPEG (check before IFD1)
-        let subIFDFullJPEG = subIFDOffsets(in: ifd0, tag: 0x014A)
-            .compactMap { locateJPEG(in: $0, offTag: 0x0201, lenTag: 0x0202) }
+        let subIFDs = subIFDOffsets(in: ifd0, tag: 0x014A)
+        let subIFDPreview = subIFDs
+            .compactMap { renderedPreviewJPEG(in: $0) }
+            .max { $0.length < $1.length }
+        let preview = ifd0Preview ?? subIFDPreview
+
+        // Preserve support for older/non-conforming files that do not carry
+        // NewSubFileType by treating their SubIFD JPEG as the full-size image.
+        let subIFDFullJPEG = subIFDs
+            .compactMap { unclassifiedJPEG(in: $0) }
             .max { $0.length < $1.length }
 
         // Walk IFD chain: IFD0 → IFD1
@@ -431,17 +438,22 @@ private struct DNGTIFFParser {
         let ifd0 = Int(ifd0Raw)
         trace.append("trace: TIFF header valid byteOrder=\(le ? "II/little" : "MM/big") ifd0=\(ifd0)")
 
-        let preview = locateJPEG(in: ifd0, offTag: 0x0111, lenTag: 0x0117)
-            ?? locateJPEG(in: ifd0, offTag: 0x0201, lenTag: 0x0202)
-        trace.append(preview == nil ? "trace: IFD0 preview JPEG tags not found" : "trace: IFD0 preview JPEG found")
+        let ifd0Type = tagValue(in: ifd0, tag: 0x00FE)
+        let ifd0Preview = renderedPreviewJPEG(in: ifd0) ?? unclassifiedJPEG(in: ifd0)
+        trace.append("trace: IFD0 NewSubFileType=\(ifd0Type.map(String.init) ?? "missing")")
+        trace.append(ifd0Preview == nil ? "trace: IFD0 rendered preview JPEG not found" : "trace: IFD0 rendered preview JPEG found")
 
-        // SubIFDs via tag 0x014A — may contain full-res JPEG (check before IFD1)
         let subIFDs = subIFDOffsets(in: ifd0, tag: 0x014A)
         trace.append("trace: IFD0 SubIFD tag 0x014A offsets count=\(subIFDs.count)")
-        let subIFDFullJPEG = subIFDs
-            .compactMap { locateJPEG(in: $0, offTag: 0x0201, lenTag: 0x0202) }
+        let subIFDPreview = subIFDs
+            .compactMap { renderedPreviewJPEG(in: $0) }
             .max { $0.length < $1.length }
-        trace.append(subIFDFullJPEG == nil ? "trace: SubIFD full JPEG not found" : "trace: SubIFD full JPEG found")
+        let preview = ifd0Preview ?? subIFDPreview
+        trace.append(subIFDPreview == nil ? "trace: classified SubIFD preview JPEG not found" : "trace: classified SubIFD preview JPEG found")
+        let subIFDFullJPEG = subIFDs
+            .compactMap { unclassifiedJPEG(in: $0) }
+            .max { $0.length < $1.length }
+        trace.append(subIFDFullJPEG == nil ? "trace: unclassified SubIFD full JPEG not found" : "trace: unclassified SubIFD full JPEG found")
 
         let ifd0Count = Int(readU16(at: ifd0))
         let ifd1Ptr = ifd0 + 2 + ifd0Count * 12
@@ -476,10 +488,51 @@ private struct DNGTIFFParser {
         let locations = DNGEmbeddedJPEGLocations(thumbnail: thumbnail, preview: preview, fullJPEG: fullJPEG)
         let failure = locations.thumbnail == nil && locations.preview == nil && locations.fullJPEG == nil ? "no JPEG offsets found" : nil
         if let failure { trace.append("ERROR: \(failure)") }
-        return .init(value: locations, trace: trace, failure: nil)
+        return .init(value: locations, trace: trace, failure: failure)
     }
 
     // MARK: Binary helpers
+
+    /// Returns a rendered preview only when the DNG metadata classifies the IFD
+    /// as reduced-resolution and its compression contains a standalone image.
+    private nonisolated func renderedPreviewJPEG(in ifdOffset: Int) -> DNGEmbeddedJPEGLocations.Location? {
+        guard let newSubFileType = tagValue(in: ifdOffset, tag: 0x00FE),
+              newSubFileType & 1 == 1,
+              let compression = tagValue(in: ifdOffset, tag: 0x0103),
+              compression == 6 || compression == 7 || compression == 52546
+        else { return nil }
+
+        return imageLocation(in: ifdOffset)
+    }
+
+    /// Compatibility path for existing DNGs that omit NewSubFileType. Once the
+    /// tag is present, its classification is authoritative and raw IFDs are not
+    /// exposed as rendered previews.
+    private nonisolated func unclassifiedJPEG(in ifdOffset: Int) -> DNGEmbeddedJPEGLocations.Location? {
+        guard tagValue(in: ifdOffset, tag: 0x00FE) == nil else { return nil }
+        return imageLocation(in: ifdOffset)
+    }
+
+    private nonisolated func imageLocation(in ifdOffset: Int) -> DNGEmbeddedJPEGLocations.Location? {
+        locateJPEG(in: ifdOffset, offTag: 0x0111, lenTag: 0x0117)
+            ?? locateJPEG(in: ifdOffset, offTag: 0x0201, lenTag: 0x0202)
+    }
+
+    private nonisolated func tagValue(in ifdOffset: Int, tag: UInt16) -> UInt32? {
+        guard let (valueOffset, byteCount) = tagDataRange(in: ifdOffset, tag: tag),
+              ifdOffset + 2 <= data.count
+        else { return nil }
+
+        let entryCount = Int(readU16(at: ifdOffset))
+        for i in 0 ..< entryCount {
+            let entry = ifdOffset + 2 + i * 12
+            guard entry + 12 <= data.count else { break }
+            guard readU16(at: entry) == tag else { continue }
+            let type = Int(readU16(at: entry + 2))
+            return readValue(at: valueOffset, type: type, byteCount: byteCount)
+        }
+        return nil
+    }
 
     private nonisolated func locateJPEG(in ifdOffset: Int, offTag: UInt16, lenTag: UInt16) -> DNGEmbeddedJPEGLocations.Location? {
         guard let offset = subIFDOffset(in: ifdOffset, tag: offTag),
@@ -499,8 +552,7 @@ private struct DNGTIFFParser {
             guard e + 12 <= data.count else { break }
             if readU16(at: e) == tag {
                 let type = Int(readU16(at: e + 2))
-                let count = Int(readU32(at: e + 4) ?? 0)
-                return readValue(at: valLoc, type: type, count: count, byteCount: byteCount).map(Int.init)
+                return readValue(at: valLoc, type: type, byteCount: byteCount).map(Int.init)
             }
         }
         return nil
@@ -517,18 +569,17 @@ private struct DNGTIFFParser {
             guard e + 12 <= data.count else { break }
             if readU16(at: e) == tag {
                 let type = Int(readU16(at: e + 2))
-                let count = Int(readU32(at: e + 4) ?? 0)
                 let sizes = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 4]
                 let elementSize = type < sizes.count ? sizes[type] : 1
                 return stride(from: 0, to: byteCount, by: elementSize).compactMap { offset in
-                    readValue(at: valLoc + offset, type: type, count: 1, byteCount: elementSize).map(Int.init)
+                    readValue(at: valLoc + offset, type: type, byteCount: elementSize).map(Int.init)
                 }
             }
         }
         return []
     }
 
-    private nonisolated func readValue(at offset: Int, type: Int, count: Int, byteCount: Int) -> UInt32? {
+    private nonisolated func readValue(at offset: Int, type: Int, byteCount: Int) -> UInt32? {
         guard offset + byteCount <= data.count else { return nil }
         // TIFF types: 1=BYTE, 2=ASCII, 3=SHORT, 4=LONG, 5=RATIONAL, 7=UNDEFINED, 9=SLONG, etc.
         switch type {
