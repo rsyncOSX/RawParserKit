@@ -8,6 +8,7 @@ The package is intentionally independent of RawCull view models, SwiftUI views, 
 
 - Sony `.arw`
 - Nikon `.nef`
+- Adobe Digital Negative `.dng`
 - Rendered-image helpers for `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff`
 
 ## Requirements
@@ -25,9 +26,10 @@ Use these APIs when you want vendor-neutral RAW handling.
 - `RawFormat`: protocol implemented by each vendor format. It exposes `extensions`, `displayName`, `extractThumbnail(from:maxDimension:qualityCost:)`, `extractEmbeddedPreview(from:fullSize:)`, `focusLocation(from:)`, `rawFileTypeString(compressionCode:)`, `sizeClassThresholds(camera:)`, and `rawSizeClass(width:height:camera:)`.
 - `RawFormatRegistry.all`: registered format types.
 - `RawFormatRegistry.allExtensions`: union of supported RAW extensions.
-- `RawFormatRegistry.format(for:)`: resolves a file URL to `SonyRawFormat`, `NikonRawFormat`, or `nil`.
+- `RawFormatRegistry.format(for:)`: resolves a file URL to `SonyRawFormat`, `NikonRawFormat`, `DNGRawFormat`, or `nil`.
 - `SonyRawFormat`: `RawFormat` conformer for `.arw`.
 - `NikonRawFormat`: `RawFormat` conformer for `.nef`.
+- `DNGRawFormat`: `RawFormat` conformer for `.dng`.
 
 ```swift
 import RawParserKit
@@ -76,8 +78,10 @@ Use the format-neutral `RawFormat` APIs where possible. The vendor-specific extr
 
 - `SonyThumbnailExtractor.extractSonyThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
 - `NikonThumbnailExtractor.extractNikonThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
+- `DNGThumbnailExtractor.extractDNGThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
 - `SonyEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
 - `NikonEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
+- `DNEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
 - `ThumbnailSharpener.sharpenedPreview(from:maxDimension:amount:) -> CGImage?`
 
 ```swift
@@ -135,6 +139,11 @@ Public parser APIs:
 - `NikonMakerNoteParser.embeddedJPEGLocations(from:) -> NEFEmbeddedJPEGLocations?`
 - `NikonMakerNoteParser.embeddedJPEGLocationsDiagnostics(from:) -> RawParserDiagnostics<NEFEmbeddedJPEGLocations>`
 - `NikonMakerNoteParser.readEmbeddedJPEGData(at:from:) -> Data?`
+- `DNGMakerNoteParser.focusLocation(from:) -> String?`
+- `DNGMakerNoteParser.focusLocationDiagnostics(from:) -> RawParserDiagnostics<String>`
+- `DNGMakerNoteParser.embeddedJPEGLocations(from:) -> DNGEmbeddedJPEGLocations?`
+- `DNGMakerNoteParser.embeddedJPEGLocationsDiagnostics(from:) -> RawParserDiagnostics<DNGEmbeddedJPEGLocations>`
+- `DNGMakerNoteParser.readEmbeddedJPEGData(at:from:) -> Data?`
 
 ```swift
 let sonyFocus = SonyMakerNoteParser.focusLocation(from: url)
@@ -149,7 +158,9 @@ if let focus = diagnostics.value {
 }
 ```
 
-Sony embedded JPEG locations are represented by `EmbeddedJPEGLocations` with `thumbnail`, `preview`, and `fullJPEG` fields. Nikon embedded JPEG locations are represented by `NEFEmbeddedJPEGLocations` with `preview` and `ifd1JPEG` fields. Each location has an absolute file `offset` and byte `length`.
+Sony embedded JPEG locations are represented by `EmbeddedJPEGLocations` with `thumbnail`, `preview`, and `fullJPEG` fields. Nikon embedded JPEG locations are represented by `NEFEmbeddedJPEGLocations` with `preview` and `ifd1JPEG` fields. DNG locations are represented by `DNGEmbeddedJPEGLocations` with `thumbnail`, `preview`, and `fullJPEG` fields. Each location has an absolute file `offset` and byte `length`.
+
+For standards-classified DNGs, preview discovery uses TIFF `NewSubFileType` and `Compression` metadata across IFD0 and its SubIFDs. This prevents a JPEG-compressed raw strip in a full-resolution IFD from being mistaken for a rendered preview. Files that omit `NewSubFileType` retain the legacy positional fallback.
 
 ```swift
 if let locations = SonyMakerNoteParser.embeddedJPEGLocations(from: url),
@@ -225,10 +236,11 @@ swift test --enable-code-coverage
 
 ## Test Strategy
 
-The test suite uses Swift Testing and synthetic binary data. It does not require real ARW or NEF files. The tests cover:
+The test suite uses Swift Testing and synthetic binary data. It does not require real ARW, NEF, or DNG files. The tests cover:
 
 - Sony focus-location MakerNote variants
 - Nikon focus-location MakerNote variants
+- DNG format metadata and TIFF IFD/SubIFD preview discovery
 - Embedded JPEG offset discovery and JPEG byte reading
 - Thumbnail and JPEG extraction cancellation behavior
 - Raw format registry extension matching
