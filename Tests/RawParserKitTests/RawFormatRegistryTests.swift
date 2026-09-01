@@ -9,6 +9,8 @@ struct RawFormatRegistryTests {
         #expect(RawFormatRegistry.format(for: URL(fileURLWithPath: "/tmp/image.ARW")) is SonyRawFormat.Type)
         #expect(RawFormatRegistry.format(for: URL(fileURLWithPath: "/tmp/image.nef")) is NikonRawFormat.Type)
         #expect(RawFormatRegistry.format(for: URL(fileURLWithPath: "/tmp/image.NEF")) is NikonRawFormat.Type)
+        #expect(RawFormatRegistry.format(for: URL(fileURLWithPath: "/tmp/image.dng")) is DNGRawFormat.Type)
+        #expect(RawFormatRegistry.format(for: URL(fileURLWithPath: "/tmp/image.DNG")) is DNGRawFormat.Type)
     }
 
     @Test
@@ -19,7 +21,7 @@ struct RawFormatRegistryTests {
 
     @Test
     func `allExtensions is union of registered raw formats`() {
-        #expect(RawFormatRegistry.allExtensions == ["arw", "nef"])
+        #expect(RawFormatRegistry.allExtensions == ["arw", "dng", "nef"])
     }
 }
 
