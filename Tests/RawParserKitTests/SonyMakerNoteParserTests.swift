@@ -520,6 +520,23 @@ struct SonyEmbeddedJPEGLocatorTests {
         #expect(locations.fullJPEG?.length == fixture.full.count)
     }
 
+    @Test(arguments: [false, true])
+    func `image loader falls back to embedded images for unsupported RAW`(useRAW9: Bool) async throws {
+        let fixture = try makeSyntheticA7RVIARWWithEmbeddedJPEGs()
+        defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+        let thumbnail = try #require(await RawImageLoader.shared.thumbnailCGImage(
+            for: fixture.url, maxPixelSize: 64, useRAW9: useRAW9
+        ))
+        #expect(thumbnail.width > 0)
+        #expect(thumbnail.height > 0)
+        #expect(max(thumbnail.width, thumbnail.height) <= 64)
+
+        let preview = try #require(await RawImageLoader.shared.previewImage(for: fixture.url, useRAW9: useRAW9))
+        #expect(preview.width == 96)
+        #expect(preview.height == 64)
+    }
+
     @Test
     func `Sony thumbnail extraction decodes A7R VI embedded preview before raw ImageIO`() async throws {
         let fixture = try makeSyntheticA7RVIARWWithEmbeddedJPEGs()

@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "RawParserKit",
     platforms: [
-        .macOS(.v26)
+        .macOS("27.0")
     ],
     products: [
         .library(

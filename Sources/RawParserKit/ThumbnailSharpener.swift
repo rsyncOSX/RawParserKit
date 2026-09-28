@@ -27,12 +27,14 @@ public enum ThumbnailSharpener {
     /// Returns nil when `CIRAWFilter` cannot decode the source (e.g. ARW 6.0 /
     /// RA16 from A7V or A7R VI / ILCE-7RM6), so the caller can fall back to the
     /// cached embedded-JPEG thumbnail.
+    /// Pass `useRAW9: true` to prefer RAW 9 when the file supports it.
     public nonisolated static func sharpenedPreview(
         from url: URL,
         maxDimension: CGFloat,
-        amount: Float
+        amount: Float,
+        useRAW9: Bool = false
     ) -> CGImage? {
-        guard let rawFilter = CIRAWFilter(imageURL: url) else { return nil }
+        guard let rawFilter = RAWDecoder.makeFilter(from: url, useRAW9: useRAW9) else { return nil }
 
         rawFilter.sharpnessAmount = 0.0
         rawFilter.detailAmount = 0.6

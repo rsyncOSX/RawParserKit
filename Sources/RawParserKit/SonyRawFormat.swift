@@ -40,11 +40,13 @@ public enum SonyRawFormat: RawFormat {
     ///
     /// This does not use the camera's embedded JPEG. Availability depends on the Sony camera and
     /// RAW compression modes supported by the RAW decoder installed with macOS.
+    /// Pass `useRAW9: true` to prefer RAW 9 when the file supports it.
     public nonisolated static func createFullSizeJPEG(
         from url: URL,
-        quality: Double = 1.0
+        quality: Double = 1.0,
+        useRAW9: Bool = false
     ) async throws -> Data {
-        try await SonyRAWJPEGCreator.createFullSizeJPEG(from: url, quality: quality)
+        try await SonyRAWJPEGCreator.createFullSizeJPEG(from: url, quality: quality, useRAW9: useRAW9)
     }
 
     public nonisolated static func focusLocation(from url: URL) -> String? {

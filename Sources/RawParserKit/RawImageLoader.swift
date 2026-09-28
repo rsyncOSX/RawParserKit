@@ -7,19 +7,21 @@ public actor RawImageLoader {
     private struct ImageTaskKey: Hashable {
         let url: URL
         let maxPixelSize: Int
+        let useRAW9: Bool
 
         func hash(into hasher: inout Hasher) {
             hasher.combine(url)
             hasher.combine(maxPixelSize)
+            hasher.combine(useRAW9)
         }
 
         static func == (lhs: ImageTaskKey, rhs: ImageTaskKey) -> Bool {
-            lhs.url == rhs.url && lhs.maxPixelSize == rhs.maxPixelSize
+            lhs.url == rhs.url && lhs.maxPixelSize == rhs.maxPixelSize && lhs.useRAW9 == rhs.useRAW9
         }
     }
 
     private var thumbnailTasks: [ImageTaskKey: Task<NSImage?, Never>] = [:]
-    private var extractedJPGTasks: [URL: Task<CGImage?, Never>] = [:]
+    private var extractedJPGTasks: [ImageTaskKey: Task<CGImage?, Never>] = [:]
     private var metadataTasks: [URL: Task<RawImageMetadata?, Never>] = [:]
 
     /// Bounds how many expensive full-size RAW decodes/demosaics can run at
@@ -32,9 +34,10 @@ public actor RawImageLoader {
 
     private init() {}
 
-    public func thumbnail(for url: URL, maxPixelSize: Int = 200) async -> NSImage? {
+    /// Opt in to RAW 9 with `useRAW9: true`; unsupported files use the existing thumbnail path.
+    public func thumbnail(for url: URL, maxPixelSize: Int = 200, useRAW9: Bool = false) async -> NSImage? {
         let boundedTargetSize = max(maxPixelSize, 1)
-        let key = ImageTaskKey(url: url, maxPixelSize: boundedTargetSize)
+        let key = ImageTaskKey(url: url, maxPixelSize: boundedTargetSize, useRAW9: useRAW9)
 
         if let existing = thumbnailTasks[key] {
             return await existing.value
@@ -55,6 +58,14 @@ public actor RawImageLoader {
                         maxPixelSize: boundedTargetSize,
                     )
                 }
+
+                if useRAW9, let developed = await RAWDecoder.loadVersion9Image(
+                    from: url,
+                    maxPixelSize: boundedTargetSize
+                ) {
+                    return developed
+                }
+                guard !Task.isCancelled else { return nil }
 
                 if let embeddedThumbnail = OrientationNormalizedImageLoader.loadEmbeddedThumbnail(
                     from: url,
@@ -87,8 +98,8 @@ public actor RawImageLoader {
         return image
     }
 
-    public func thumbnailCGImage(for url: URL, maxPixelSize: Int = 200) async -> CGImage? {
-        guard let image = await thumbnail(for: url, maxPixelSize: maxPixelSize) else { return nil }
+    public func thumbnailCGImage(for url: URL, maxPixelSize: Int = 200, useRAW9: Bool = false) async -> CGImage? {
+        guard let image = await thumbnail(for: url, maxPixelSize: maxPixelSize, useRAW9: useRAW9) else { return nil }
         return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     }
 
@@ -97,19 +108,21 @@ public actor RawImageLoader {
         await thumbnail(for: url, maxPixelSize: targetSize)
     }
 
-    public func previewImage(for rawURL: URL) async -> CGImage? {
-        if let existing = extractedJPGTasks[rawURL] {
+    /// Opt in to RAW 9 with `useRAW9: true`; otherwise loads the existing sidecar or embedded preview.
+    public func previewImage(for rawURL: URL, useRAW9: Bool = false) async -> CGImage? {
+        let key = ImageTaskKey(url: rawURL, maxPixelSize: 4320, useRAW9: useRAW9)
+        if let existing = extractedJPGTasks[key] {
             return await existing.value
         }
 
         let limiter = fullSizeDecodeLimiter
         let task = Task<CGImage?, Never>(priority: .userInitiated) {
-            await loadExtractedJPGPreview(for: rawURL, limiter: limiter)
+            await loadExtractedJPGPreview(for: rawURL, limiter: limiter, useRAW9: useRAW9)
         }
 
-        extractedJPGTasks[rawURL] = task
+        extractedJPGTasks[key] = task
         let image = await task.value
-        extractedJPGTasks[rawURL] = nil
+        extractedJPGTasks[key] = nil
         return image
     }
 
@@ -118,7 +131,15 @@ public actor RawImageLoader {
         await previewImage(for: rawURL)
     }
 
-    private func loadExtractedJPGPreview(for rawURL: URL, limiter: DecodeConcurrencyLimiter) async -> CGImage? {
+    private func loadExtractedJPGPreview(for rawURL: URL, limiter: DecodeConcurrencyLimiter, useRAW9: Bool) async -> CGImage? {
+        if useRAW9, !SupportedFileType.isRenderedImage(rawURL) {
+            let developed = await limiter.run {
+                await RAWDecoder.loadVersion9Image(from: rawURL, maxPixelSize: 4320)
+            }
+            guard !Task.isCancelled else { return nil }
+            if let developed { return developed }
+        }
+
         let sidecarJPGURL = rawURL
             .deletingPathExtension()
             .appendingPathExtension(SupportedFileType.jpg.rawValue)

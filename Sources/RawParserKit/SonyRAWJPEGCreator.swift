@@ -31,7 +31,8 @@ enum SonyRAWJPEGCreator {
 
     nonisolated static func createFullSizeJPEG(
         from url: URL,
-        quality: Double
+        quality: Double,
+        useRAW9: Bool = false
     ) async throws -> Data {
         guard quality.isFinite, (0.0 ... 1.0).contains(quality) else {
             throw SonyJPEGCreationError.invalidQuality(quality)
@@ -40,7 +41,7 @@ enum SonyRAWJPEGCreator {
         return try await CancellableImageIOWork.run(qos: .utility) { token in
             try token.checkCancellation()
 
-            guard let rawFilter = CIRAWFilter(imageURL: url),
+            guard let rawFilter = RAWDecoder.makeFilter(from: url, useRAW9: useRAW9),
                   let image = rawFilter.outputImage,
                   !image.extent.isEmpty,
                   !image.extent.isInfinite,

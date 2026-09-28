@@ -14,7 +14,7 @@ The package is intentionally independent of RawCull view models, SwiftUI views, 
 ## Requirements
 
 - Swift 6.2
-- macOS 26 or newer
+- macOS 27 or newer, with the macOS 27 SDK
 - Apple platforms with Foundation, AppKit, CoreGraphics, ImageIO, CoreImage, and OSLog
 
 ## Package APIs
@@ -54,9 +54,9 @@ if let format = RawFormatRegistry.format(for: url) {
 
 Use `RawImageLoader.shared` for app/browser-style loading with task deduplication and concurrency limits.
 
-- `thumbnail(for:maxPixelSize:) async -> NSImage?`: loads a rendered-image or RAW thumbnail.
-- `thumbnailCGImage(for:maxPixelSize:) async -> CGImage?`: loads the same thumbnail as a `CGImage`.
-- `previewImage(for:) async -> CGImage?`: loads a sidecar JPG when present, otherwise extracts an embedded RAW preview.
+- `thumbnail(for:maxPixelSize:useRAW9:) async -> NSImage?`: loads a rendered-image or RAW thumbnail; RAW 9 is opt-in.
+- `thumbnailCGImage(for:maxPixelSize:useRAW9:) async -> CGImage?`: loads the same thumbnail as a `CGImage`.
+- `previewImage(for:useRAW9:) async -> CGImage?`: loads a sidecar JPG or an embedded RAW preview by default; RAW 9 is opt-in.
 - `metadata(for:) async -> RawImageMetadata?`: reads display-ready EXIF rows, RAW metadata, and focus point information.
 
 ```swift
@@ -64,7 +64,15 @@ let image = await RawImageLoader.shared.thumbnail(for: url, maxPixelSize: 240)
 let cgImage = await RawImageLoader.shared.thumbnailCGImage(for: url, maxPixelSize: 240)
 let preview = await RawImageLoader.shared.previewImage(for: url)
 let metadata = await RawImageLoader.shared.metadata(for: url)
+
+// Explicitly opt in to RAW 9 as the primary decoder for these requests.
+let raw9Thumbnail = await RawImageLoader.shared.thumbnail(
+    for: url, maxPixelSize: 240, useRAW9: true
+)
+let raw9Preview = await RawImageLoader.shared.previewImage(for: url, useRAW9: true)
 ```
+
+All `useRAW9` parameters default to `false`, preserving the existing loading behavior. When explicitly enabled, the loader selects Core Image's RAW 9 decoder (`.version9` or `.version9DNG`) when the file lists it in `supportedDecoderVersions`. If RAW 9 is unavailable or rendering fails, the existing sidecar, ImageIO, and vendor-specific embedded JPEG paths provide the fallback. RAW previews are limited to 4320 px on the longest edge; thumbnails use the requested pixel limit. Core Image applies the RAW file's orientation during development. Concurrent requests with different decoder choices are deduplicated separately. Rendered-image loading and the explicit embedded-JPEG extraction APIs keep their existing behavior.
 
 `RawImageMetadata` contains optional `camera`, `lens`, `exposure`, `aperture`, `apertureValue`, `focalLength`, `iso`, `isoValue`, `capturedAt`, `dimensions`, `focusPoint`, `rawFileType`, `rawSizeClass`, `pixelWidth`, and `pixelHeight` fields. Its `rows` property returns display labels and values for non-empty fields, and `isEmpty` reports whether there is anything to show.
 
@@ -82,7 +90,7 @@ Use the format-neutral `RawFormat` APIs where possible. The vendor-specific extr
 - `SonyEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
 - `NikonEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
 - `DNEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
-- `ThumbnailSharpener.sharpenedPreview(from:maxDimension:amount:) -> CGImage?`
+- `ThumbnailSharpener.sharpenedPreview(from:maxDimension:amount:useRAW9:) -> CGImage?`
 
 ```swift
 let thumbnail = try await SonyThumbnailExtractor.extractSonyThumbnail(
@@ -102,7 +110,7 @@ The older `JPGSonyARWExtractor.jpgSonyARWExtractor(...)` and `JPGNikonNEFExtract
 
 ### Sony Full-Size JPEG Creation
 
-`SonyRawFormat.createFullSizeJPEG(from:quality:)` develops Sony ARW sensor data through macOS `CIRAWFilter` and encodes it as sRGB JPEG data.
+`SonyRawFormat.createFullSizeJPEG(from:quality:useRAW9:)` develops Sony ARW sensor data through macOS `CIRAWFilter` and encodes it as sRGB JPEG data.
 
 ```swift
 let jpegData = try await SonyRawFormat.createFullSizeJPEG(
@@ -111,7 +119,7 @@ let jpegData = try await SonyRawFormat.createFullSizeJPEG(
 )
 ```
 
-This does not use the camera's embedded JPEG. Camera and compression-mode support follows the RAW decoder installed with macOS. Unsupported files throw `SonyJPEGCreationError.unsupportedOrInvalidRAW`.
+This does not use the camera's embedded JPEG. JPEG creation and `ThumbnailSharpener` also accept `useRAW9: true` to opt in; both retain the existing system decoder by default and for files without RAW 9 support. Camera and compression-mode support follows the RAW decoder installed with macOS. Unsupported files throw `SonyJPEGCreationError.unsupportedOrInvalidRAW`.
 
 `SonyJPEGCreationError` cases:
 
