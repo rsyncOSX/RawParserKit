@@ -95,9 +95,11 @@ public enum GenericEmbeddedPreviewExtractor {
         if requiresDownsampling {
             RawParserKitLog.process.info("GenericEmbeddedPreviewExtractor: Native downsampling to \(maxThumbnailSize)px")
 
+            // RawImageLoader applies source orientation after extraction. Keep
+            // this path unoriented, matching the direct decode below.
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceCreateThumbnailWithTransform: false,
                 kCGImageSourceThumbnailMaxPixelSize: Int(maxThumbnailSize)
             ]
             return CGImageSourceCreateThumbnailAtIndex(imageSource, targetIndex, options as CFDictionary)
