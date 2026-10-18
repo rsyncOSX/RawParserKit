@@ -12,7 +12,8 @@ public enum RawFormatRegistry {
     public nonisolated static let all: [any RawFormat.Type] = [
         SonyRawFormat.self,
         NikonRawFormat.self,
-        DNGRawFormat.self
+        DNGRawFormat.self,
+        GenericRawFormat.self
     ]
 
     /// Union of extensions across every registered format.
