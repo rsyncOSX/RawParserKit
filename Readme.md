@@ -9,7 +9,16 @@ The package is intentionally independent of RawCull view models, SwiftUI views, 
 - Sony `.arw`
 - Nikon `.nef`
 - Adobe Digital Negative `.dng`
+- Generic RAW handling through macOS ImageIO:
+  - Canon `.cr2`, `.cr3`, `.crw`; Fujifilm `.raf`; Olympus / OM System `.orf`; Panasonic `.rw2`
+  - Pentax / Ricoh `.pef`, `.ptx`; Samsung `.srw`; Sigma `.x3f`; Phase One `.iiq`
+  - Hasselblad `.3fr`, `.fff`; Kodak `.dcr`, `.kdc`; Minolta `.mrw`; Epson `.erf`
+  - Mamiya `.mef`; Leaf `.mos`; Nikon `.nrw`; Leica `.rwl`; Casio `.bay`; legacy Sony `.sr2`, `.srf`
 - Rendered-image helpers for `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff`
+
+Generic RAW extension recognition does not guarantee that every camera model or compression mode can be opened. Thumbnail generation depends on ImageIO support installed with macOS, and embedded preview extraction requires ImageIO to expose a usable JPEG sub-image. There is no vendor-specific binary preview fallback for these formats.
+
+Sony ARW, Nikon NEF, and DNG retain their dedicated handlers and take priority over the generic handler. Adding generic formats does not change the Sony ARW loading path.
 
 ## Requirements
 
@@ -26,10 +35,11 @@ Use these APIs when you want vendor-neutral RAW handling.
 - `RawFormat`: protocol implemented by each vendor format. It exposes `extensions`, `displayName`, `extractThumbnail(from:maxDimension:qualityCost:)`, `extractEmbeddedPreview(from:fullSize:)`, `focusLocation(from:)`, `rawFileTypeString(compressionCode:)`, `sizeClassThresholds(camera:)`, and `rawSizeClass(width:height:camera:)`.
 - `RawFormatRegistry.all`: registered format types.
 - `RawFormatRegistry.allExtensions`: union of supported RAW extensions.
-- `RawFormatRegistry.format(for:)`: resolves a file URL to `SonyRawFormat`, `NikonRawFormat`, `DNGRawFormat`, or `nil`.
+- `RawFormatRegistry.format(for:)`: resolves a file URL by its case-insensitive extension to `SonyRawFormat`, `NikonRawFormat`, `DNGRawFormat`, `GenericRawFormat`, or `nil`.
 - `SonyRawFormat`: `RawFormat` conformer for `.arw`.
 - `NikonRawFormat`: `RawFormat` conformer for `.nef`.
 - `DNGRawFormat`: `RawFormat` conformer for `.dng`.
+- `GenericRawFormat`: ImageIO-based conformer for the additional RAW extensions listed above. It uses generic compression labels and megapixel size-class thresholds. Its `focusLocation(from:)` returns `nil`; `RawImageLoader` can still use EXIF `SubjectArea` when available.
 
 ```swift
 import RawParserKit
@@ -87,9 +97,11 @@ Use the format-neutral `RawFormat` APIs where possible. The vendor-specific extr
 - `SonyThumbnailExtractor.extractSonyThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
 - `NikonThumbnailExtractor.extractNikonThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
 - `DNGThumbnailExtractor.extractDNGThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
+- `GenericRawThumbnailExtractor.extractThumbnail(from:maxDimension:qualityCost:) async throws -> CGImage`
 - `SonyEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
 - `NikonEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
 - `DNEmbeddedJPEGExtractor.extractEmbeddedJPEG(from:fullSize:limiter:) async -> CGImage?`
+- `GenericEmbeddedPreviewExtractor.extractEmbeddedPreview(from:fullSize:limiter:) async -> CGImage?`
 - `ThumbnailSharpener.sharpenedPreview(from:maxDimension:amount:useRAW9:) -> CGImage?`
 
 ```swift
@@ -105,6 +117,8 @@ let embeddedPreview = await SonyEmbeddedJPEGExtractor.extractEmbeddedJPEG(
 ```
 
 `fullSize: true` allows previews up to 8640 px on the longest edge. `fullSize: false` downsamples large embedded previews to 4320 px.
+
+The generic embedded-preview extractor returns pixels without applying EXIF orientation, including when downsampling. Use `RawImageLoader.shared.previewImage(for:)` for an oriented preview, or apply source orientation once with `OrientationNormalizedImageLoader.applyingSourceOrientation(to:from:)` when calling the generic extractor directly.
 
 The older `JPGSonyARWExtractor.jpgSonyARWExtractor(...)` and `JPGNikonNEFExtractor.jpgNikonNEFExtractor(...)` entrypoints remain available as deprecated compatibility shims.
 
@@ -197,6 +211,7 @@ if let locations = SonyMakerNoteParser.embeddedJPEGLocations(from: url),
 - `loadEmbeddedPreview(from:sourceURL:) -> CGImage?`
 
 `SupportedFileType` enumerates `.arw`, `.nef`, `.jpeg`, `.jpg`, `.png`, `.tif`, and `.tiff`.
+Use `RawFormatRegistry.allExtensions` for the complete set of recognized RAW extensions.
 
 ### Cancellation And Decode Limiting
 
@@ -244,7 +259,7 @@ swift test --enable-code-coverage
 
 ## Test Strategy
 
-The test suite uses Swift Testing and synthetic binary data. It does not require real ARW, NEF, or DNG files. The tests cover:
+The test suite uses Swift Testing, synthetic binary data, and generated images. It does not require real camera RAW files. The tests cover:
 
 - Sony focus-location MakerNote variants
 - Nikon focus-location MakerNote variants
@@ -252,7 +267,13 @@ The test suite uses Swift Testing and synthetic binary data. It does not require
 - Embedded JPEG offset discovery and JPEG byte reading
 - Thumbnail and JPEG extraction cancellation behavior
 - Raw format registry extension matching
+- Generic RAW format metadata and registration
+- Generic portrait-preview orientation through the image loader, with and without downsampling
+
+Synthetic tests do not validate camera-specific macOS decoder support. Smoke-test real files from the target cameras to verify thumbnail and preview availability.
 
 ## Adding A Vendor
 
 Add a new `RawFormat` conformer for the vendor, implement its parser/extractor entrypoints, and register the conformer in `RawFormatRegistry.all`. Prefer synthetic binary fixtures for parser tests so the package remains fast and deterministic.
+
+Keep `GenericRawFormat` last in the registry so dedicated handlers take priority. When adding a dedicated handler for an extension currently handled by `GenericRawFormat`, remove that extension from the generic list.
