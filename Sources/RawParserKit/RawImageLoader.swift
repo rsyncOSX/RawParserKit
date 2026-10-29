@@ -50,39 +50,7 @@ public actor RawImageLoader {
             // Bound concurrent decodes: fast grid scrolling can otherwise
             // trigger many simultaneous RAW/embedded-thumbnail decodes.
             let cgImage: CGImage? = await limiter.run {
-                guard !Task.isCancelled else { return nil }
-
-                if SupportedFileType.isRenderedImage(url) {
-                    return OrientationNormalizedImageLoader.loadThumbnail(
-                        from: url,
-                        maxPixelSize: boundedTargetSize,
-                    )
-                }
-
-                if useRAW9, let developed = await RAWDecoder.loadVersion9Image(
-                    from: url,
-                    maxPixelSize: boundedTargetSize
-                ) {
-                    return developed
-                }
-                guard !Task.isCancelled else { return nil }
-
-                if let embeddedThumbnail = OrientationNormalizedImageLoader.loadEmbeddedThumbnail(
-                    from: url,
-                    maxPixelSize: boundedTargetSize,
-                ) {
-                    return embeddedThumbnail
-                }
-
-                guard let format = RawFormatRegistry.format(for: url),
-                      let extracted = try? await format.extractThumbnail(
-                          from: url,
-                          maxDimension: CGFloat(boundedTargetSize),
-                          qualityCost: 4,
-                      )
-                else { return nil }
-
-                return OrientationNormalizedImageLoader.applyingSourceOrientation(to: extracted, from: url) ?? extracted
+                await Self.decodeThumbnail(for: url, boundedTargetSize: boundedTargetSize, useRAW9: useRAW9)
             }
             
             guard let cgImage, !Task.isCancelled else { return nil }
@@ -96,6 +64,46 @@ public actor RawImageLoader {
         let image = await task.value
         thumbnailTasks[key] = nil
         return image
+    }
+
+    // Slot admission alone does not move synchronous ImageIO work off the caller's
+    // executor. Keep decoding concurrent while the caller holds its existing slot.
+    @concurrent private static func decodeThumbnail(
+        for url: URL, boundedTargetSize: Int, useRAW9: Bool
+    ) async -> CGImage? {
+        guard !Task.isCancelled else { return nil }
+
+        if SupportedFileType.isRenderedImage(url) {
+            return OrientationNormalizedImageLoader.loadThumbnail(
+                from: url,
+                maxPixelSize: boundedTargetSize,
+            )
+        }
+
+        if useRAW9, let developed = await RAWDecoder.loadVersion9Image(
+            from: url,
+            maxPixelSize: boundedTargetSize
+        ) {
+            return developed
+        }
+        guard !Task.isCancelled else { return nil }
+
+        if let embeddedThumbnail = OrientationNormalizedImageLoader.loadEmbeddedThumbnail(
+            from: url,
+            maxPixelSize: boundedTargetSize,
+        ) {
+            return embeddedThumbnail
+        }
+
+        guard let format = RawFormatRegistry.format(for: url),
+              let extracted = try? await format.extractThumbnail(
+                  from: url,
+                  maxDimension: CGFloat(boundedTargetSize),
+                  qualityCost: 4,
+              )
+        else { return nil }
+
+        return OrientationNormalizedImageLoader.applyingSourceOrientation(to: extracted, from: url) ?? extracted
     }
 
     public func thumbnailCGImage(for url: URL, maxPixelSize: Int = 200, useRAW9: Bool = false) async -> CGImage? {
